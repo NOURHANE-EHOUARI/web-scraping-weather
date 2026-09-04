@@ -1,0 +1,413 @@
+{
+  "name": "My workflow",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -512,
+        -784
+      ],
+      "id": "75c84049-08f3-4562-8473-610ab3740749",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "url": "https://raw.githubusercontent.com/mwgg/Airports/master/airports.json",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -176,
+        -784
+      ],
+      "id": "f2760405-21e1-4492-a504-2e20ad6f6b71",
+      "name": "Get_Airports_DB"
+    },
+    {
+      "parameters": {
+        "jsCode": "const iataIndex = $('Slim_Airports_DB').first().json;\nconst flights = $('Extract_Flights').all();\n\nconsole.log('Nombre de clés IATA dans l\\'index:', Object.keys(iataIndex).length);\nconsole.log('Exemple de clés IATA:', Object.keys(iataIndex).slice(0, 5));\nconsole.log('Nombre de vols:', flights.length);\nconsole.log('Premier vol depart_iata:', flights[0]?.json?.depart_iata);\nconsole.log('Premier vol arrivee_iata:', flights[0]?.json?.arrivee_iata);\n\nconst result = [];\nlet matched = 0;\nlet notMatched = 0;\n\nfor (const item of flights) {\n  const f = item.json;\n  const dep = iataIndex[f.depart_iata];\n  const arr = iataIndex[f.arrivee_iata];\n\n  if (!dep || !arr) {\n    notMatched++;\n    continue;\n  }\n\n  matched++;\n  result.push({\n    json: {\n      ...f,\n      depart_lat: dep.lat,\n      depart_lon: dep.lon,\n      depart_ville: dep.city,\n      arrivee_lat: arr.lat,\n      arrivee_lon: arr.lon,\n      arrivee_ville: arr.city\n    }\n  });\n}\n\nconsole.log('Vols matchés:', matched, '| Vols non matchés:', notMatched);\nconsole.log('Résultat final (result.length):', result.length);\n\nreturn result;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        784,
+        -688
+      ],
+      "id": "a0296c52-9456-479e-b7c0-b7352bdd0316",
+      "name": "Match_Coordinate"
+    },
+    {
+      "parameters": {
+        "url": "https://api.open-meteo.com/v1/forecast",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "latitude",
+              "value": "={{ $json.depart_lat }}"
+            },
+            {
+              "name": "longitude",
+              "value": "={{ $json.depart_lon }}"
+            },
+            {
+              "name": "start_date",
+              "value": "={{ $json.date_depart }}"
+            },
+            {
+              "name": "end_date",
+              "value": "={{ $json.date_depart }}"
+            },
+            {
+              "name": "daily",
+              "value": "temperature_2m_max,temperature_2m_min,precipitation_sum,windspeed_10m_max,weathercode"
+            },
+            {
+              "name": "timezone",
+              "value": "auto"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1024,
+        -896
+      ],
+      "id": "2d574c0c-6c3b-4bc9-872f-67671bcca38d",
+      "name": "Get_Weather_Depart"
+    },
+    {
+      "parameters": {
+        "url": "http://api.aviationstack.com/v1/flights",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "access_key",
+              "value": "YOUR_AVIATIONSTACK_API_KEY"
+            },
+            {
+              "name": "airline_iata",
+              "value": "AT"
+            },
+            {
+              "name": "limit",
+              "value": "20"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -224,
+        -512
+      ],
+      "id": "4b4b3c9e-6a19-421f-955c-92a07ff67c61",
+      "name": "Get_Flights_API"
+    },
+    {
+      "parameters": {
+        "jsCode": "const airportsRaw = $input.first().json;\n\nconst iataIndex = {};\nfor (const icao in airportsRaw) {\n  const a = airportsRaw[icao];\n  if (a && a.iata) {\n    iataIndex[a.iata] = { lat: a.lat, lon: a.lon, city: a.city };\n  }\n}\n\nreturn [{ json: iataIndex }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        128,
+        -784
+      ],
+      "id": "69a7681d-93aa-4599-b953-c735e40d7cb5",
+      "name": "Slim_Airports_DB"
+    },
+    {
+      "parameters": {
+        "jsCode": "const flights = $input.first().json.data;\n\nconst result = [];\n\nfor (const f of flights) {\n  // On ignore les vols annulés, pas pertinents pour la météo\n  if (f.flight_status === 'cancelled') continue;\n\n  result.push({\n    json: {\n      flight_number: f.flight.iata,\n      depart_iata: f.departure.iata,\n      depart_airport: f.departure.airport,\n      arrivee_iata: f.arrival.iata,\n      arrivee_airport: f.arrival.airport,\n      date_depart: f.departure.scheduled ? f.departure.scheduled.split('T')[0] : null,\n      heure_depart_utc: f.departure.scheduled,\n      statut: f.flight_status\n    }\n  });\n}\n\nreturn result;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        -512
+      ],
+      "id": "733e41d3-f1ce-4c16-8fb7-541794935aa8",
+      "name": "Extract_Flights"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        544,
+        -688
+      ],
+      "id": "d1cc6433-67d7-4e51-89e4-ea4b5aeab89c",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "url": "https://api.open-meteo.com/v1/forecast",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "latitude",
+              "value": "={{ $json.arrivee_lat }}"
+            },
+            {
+              "name": "longitude",
+              "value": "={{ $json.arrivee_lon }}"
+            },
+            {
+              "name": "start_date",
+              "value": "={{ $json.date_depart }}"
+            },
+            {
+              "name": "end_date",
+              "value": "={{ $json.date_depart }}"
+            },
+            {
+              "name": "daily",
+              "value": "temperature_2m_max,temperature_2m_min,precipitation_sum,windspeed_10m_max,weathercode"
+            },
+            {
+              "name": "timezone",
+              "value": "auto"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1072,
+        -464
+      ],
+      "id": "753cf52c-034c-4d83-9a36-dc30f6d988d5",
+      "name": "Get_Weather_Arrivee"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1440,
+        -672
+      ],
+      "id": "20563eb8-dd86-410c-b30b-70f2c93eb53f",
+      "name": "Merge1"
+    },
+    {
+      "parameters": {
+        "jsCode": "const departWeather = $('Get_Weather_Depart').all();\nconst arriveeWeather = $('Get_Weather_Arrivee').all();\nconst flights = $('Match_Coordinate').all();\n\nconst result = [];\n\nfor (let i = 0; i < flights.length; i++) {\n  const f = flights[i].json;\n  const wd = departWeather[i]?.json?.daily;\n  const wa = arriveeWeather[i]?.json?.daily;\n\n  result.push({\n    json: {\n      flight_number: f.flight_number,\n      date_depart: f.date_depart,\n      depart_iata: f.depart_iata,\n      depart_ville: f.depart_ville,\n      arrivee_iata: f.arrivee_iata,\n      arrivee_ville: f.arrivee_ville,\n      statut: f.statut,\n      temp_max_depart: wd?.temperature_2m_max?.[0] ?? null,\n      temp_min_depart: wd?.temperature_2m_min?.[0] ?? null,\n      precipitation_depart: wd?.precipitation_sum?.[0] ?? null,\n      vent_depart: wd?.windspeed_10m_max?.[0] ?? null,\n      temp_max_arrivee: wa?.temperature_2m_max?.[0] ?? null,\n      temp_min_arrivee: wa?.temperature_2m_min?.[0] ?? null,\n      precipitation_arrivee: wa?.precipitation_sum?.[0] ?? null,\n      vent_arrivee: wa?.windspeed_10m_max?.[0] ?? null,\n    }\n  });\n}\n\nreturn result;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1712,
+        -672
+      ],
+      "id": "eefb87f9-0859-4713-a343-2316fbd59f1e",
+      "name": "Combine_Final"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        1920,
+        -672
+      ],
+      "id": "55d1467f-5e07-4591-9a5a-1897b2e0c09f",
+      "name": "Convert to File"
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "C:\\Users\\NOURHANE\\web-scraping-weather\\data\\output\\vols_meteo.csv",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        2128,
+        -672
+      ],
+      "id": "ac2ceca6-cc0f-4aa5-bf34-823501a3520e",
+      "name": "Read/Write Files from Disk"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Get_Airports_DB",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get_Flights_API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get_Airports_DB": {
+      "main": [
+        [
+          {
+            "node": "Slim_Airports_DB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Match_Coordinate": {
+      "main": [
+        [
+          {
+            "node": "Get_Weather_Depart",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get_Weather_Arrivee",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get_Flights_API": {
+      "main": [
+        [
+          {
+            "node": "Extract_Flights",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slim_Airports_DB": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract_Flights": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Match_Coordinate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get_Weather_Depart": {
+      "main": [
+        [
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get_Weather_Arrivee": {
+      "main": [
+        [
+          {
+            "node": "Merge1",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge1": {
+      "main": [
+        [
+          {
+            "node": "Combine_Final",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Combine_Final": {
+      "main": [
+        [
+          {
+            "node": "Convert to File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert to File": {
+      "main": [
+        [
+          {
+            "node": "Read/Write Files from Disk",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "b106ff37-38aa-41f8-a833-eb6bad1c9feb",
+  "meta": {
+    "instanceId": "19bb0e31db52c8c5f38a976873728fb3d8768dbec5f55aa30351bca876b59ab2"
+  },
+  "nodeGroups": [],
+  "id": "pgtce8A1VxYBXLjN",
+  "tags": []
+}
